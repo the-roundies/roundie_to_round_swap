@@ -1,55 +1,104 @@
-import splToken from '@solana/spl-token';
-import solanaWeb3 from '@solana/web3.js';
-import {BASE_PROGRAM_ID, SEED} from "../lib/constants";
-import {getKeypair} from "../lib/get-keypair";
+import splToken, {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+  getAssociatedTokenAddress,
+  TOKEN_PROGRAM_ID,
+  setAuthority,
+  getAccount,
+  AuthorityType,
+} from '@solana/spl-token';
+import {
+  PublicKey,
+  Transaction,
+  sendAndConfirmRawTransaction,
+  TransactionInstruction,
+} from '@solana/web3.js';
+import {
+  BASE_PROGRAM_ID,
+  DEVNET_TOKEN,
+  RPC_URL_DEV,
+  SEED,
+} from '../lib/constants';
+import { getKeypair } from '../lib/get-keypair';
+import { getConnection } from '../lib/get-connection';
 
 (async () => {
+  // Assume you have a connection to the Solana network
+  const connection = await getConnection(RPC_URL_DEV);
 
-    // Assume you have a connection to the Solana network
-    const connection = new solanaWeb3.Connection(
-        solanaWeb3.clusterApiUrl('mainnet-beta')
-    );
+  // Assume you have a wallet account with enough SOL
+  const wallet = await getKeypair();
 
-    // Assume you have a wallet account with enough SOL
-    const wallet = await getKeypair();
+  // Your base program ID and the seed
 
-    // Your base program ID and the seed
+  // Create a PublicKey instance from your base program ID
+  const baseProgramId = new PublicKey(BASE_PROGRAM_ID);
 
-    // Create a PublicKey instance from your base program ID
-    const baseProgramId = new solanaWeb3.PublicKey(BASE_PROGRAM_ID);
+  // Find the PDA
+  const [pdaAddress, nonce] = await PublicKey.findProgramAddress(
+    [Buffer.from(SEED)],
+    baseProgramId
+  );
 
-    // Find the PDA
-    const [pdaAddress, nonce] = await solanaWeb3.PublicKey.findProgramAddress(
-        [Buffer.from(SEED)],
-        baseProgramId
-    );
+  console.log('pdaAddress', pdaAddress.toBase58());
 
-    // Assume you have the mint address
-    // AD2AWgBPdfbvko4a7i6ZjKq1JxDGRUTPWpd7bUJ2hSaK <- mainnet token
-    // Bp8uHwfpgdN5FFhFe8AowBK4fSrJRf3CPrJ5d4R5dSsb <- devnet token
-    const mintAddress = new solanaWeb3.PublicKey('Bp8uHwfpgdN5FFhFe8AowBK4fSrJRf3CPrJ5d4R5dSsb');
+  // Assume you have the mint address
+  const mintAddress = new PublicKey(DEVNET_TOKEN);
 
-    // Generate a new keypair for the token account
-    const tokenAccount = new solanaWeb3.Account();
+  const pdaAccount = await getAssociatedTokenAddress(
+    mintAddress,
+    pdaAddress,
+    true
+  );
 
+  let createTokenAccountIx: TransactionInstruction | undefined;
+
+  try {
+    await getAccount(connection, pdaAddress, 'confirmed', TOKEN_PROGRAM_ID);
+  } catch (e) {
     // Create instruction to create new token account
-    const createTokenAccountIx = splToken.Token.createAssociatedTokenAccountInstruction(
-        splToken.ASSOCIATED_TOKEN_PROGRAM_ID,
-        splToken.TOKEN_PROGRAM_ID,
-        mintAddress,
-        tokenAccount.publicKey,
-        pdaAddress, // owner will be the PDA
-        pdaAddress, // address of the new token account will be the same as PDA
+    createTokenAccountIx = createAssociatedTokenAccountInstruction(
+      wallet.publicKey,
+      pdaAccount,
+      pdaAddress,
+      mintAddress,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+  }
+
+  const transaction = new Transaction();
+
+  if (createTokenAccountIx) {
+    transaction.add(createTokenAccountIx);
+  } else {
+    const setAuthorityResult = await setAuthority(
+      connection,
+      wallet,
+      pdaAccount,
+      wallet.publicKey,
+      AuthorityType.AccountOwner,
+      pdaAccount
     );
 
-    // Send transaction
-    const transaction = new solanaWeb3.Transaction().add(createTokenAccountIx);
-    transaction.recentBlockhash = (await connection.getRecentBlockhash()).blockhash;
-    transaction.feePayer = wallet.publicKey;
-    transaction.sign(wallet, tokenAccount);
+    console.log('setAuthorityResult', setAuthorityResult);
+    return;
+  }
 
-    const txid = await connection.sendRawTransaction(transaction.serialize());
-    await connection.confirmTransaction(txid);
+  // Send transaction
 
-    console.log('Token account created for PDA:', tokenAccount.publicKey.toBase58());
+  transaction.recentBlockhash = (
+    await connection.getLatestBlockhash()
+  ).blockhash;
+  transaction.feePayer = wallet.publicKey;
+
+  const txid = await sendAndConfirmRawTransaction(
+    connection,
+    transaction.serialize(),
+    {
+      commitment: 'confirmed',
+    }
+  );
+
+  console.log('Token account created for PDA:', pdaAccount.toBase58());
 })();
