@@ -2,4 +2,4 @@
 
 set -e
 
-anchor upgrade --program-id HgpmQVLjipSFXipjqfjkX2LLKRc8nKBktuEXjpeAqqbe target/deploy/roundie_to_round.so
+anchor upgrade --program-id C33wP7zndt1MrsGfGnJ91HT6B7rNZdmMASYvmcoRudNm target/deploy/roundie_to_round.so

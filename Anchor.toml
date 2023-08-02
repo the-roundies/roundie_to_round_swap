@@ -2,13 +2,13 @@
 seeds = false
 skip-lint = false
 [programs.localnet]
-roundie_to_round = "HgpmQVLjipSFXipjqfjkX2LLKRc8nKBktuEXjpeAqqbe"
+roundie_to_round = "C33wP7zndt1MrsGfGnJ91HT6B7rNZdmMASYvmcoRudNm"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "https://frosty-thrilling-sun.solana-devnet.discover.quiknode.pro/2f4f7bd5b15f565bdf2b069e1700be4ea9d489ce/"
+cluster = "localnet"
 wallet = "/Users/paulbredenberg/.config/solana/id.json"
 
 [scripts]
