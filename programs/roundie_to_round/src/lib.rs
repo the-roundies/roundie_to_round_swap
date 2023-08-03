@@ -1,217 +1,180 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount};
+use anchor_lang::solana_program::entrypoint::ProgramResult;
+use anchor_lang::solana_program::pubkey::Pubkey;
+use anchor_spl::token::{transfer, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::associated_token::AssociatedToken;
 
 declare_id!("C33wP7zndt1MrsGfGnJ91HT6B7rNZdmMASYvmcoRudNm");
 
 #[program]
 pub mod roundie_to_round {
-    use std::str::FromStr;
-    use anchor_lang::solana_program::entrypoint::ProgramResult;
     use super::*;
 
-    pub fn initialize_authority(_ctx: Context<InitializeAuthority>) -> ProgramResult {
-        msg!("Initializing authority");
+    /*
+        This instruction sets the mint addresses for the tokens to exchange.
+        This instruction can only be called by the authority.
 
-        Ok(())
-    }
-
-    // TODO: refactor this to validate mints in it's own function
+        IMPORTANT:
+        The first time this instruction gets called there is no check on the
+        authority meaning that everyone can call it and set themselves as the
+        authority. Make sure you call this instruction at least once after deploying.
+     */
     pub fn initialize(ctx: Context<Initialize>) -> ProgramResult {
         msg!("Initializing accounts");
+        msg!("Mint to accept {}", ctx.accounts.old_token_mint.to_account_info().key);
+        msg!("Mint to return {}", ctx.accounts.new_token_mint.to_account_info().key);
 
-        msg!("Mint to accept {}", ctx.accounts.mint_to_accept.to_account_info().key);
-
-        msg!("Mint to return {}", ctx.accounts.mint_to_return.to_account_info().key);
+        // Updating the data in the PDA account
+        ctx.accounts.pda.authority = *ctx.accounts.authority.key;
+        ctx.accounts.pda.old_token_mint = *ctx.accounts.old_token_mint.to_account_info().key;
+        ctx.accounts.pda.new_token_mint = *ctx.accounts.new_token_mint.to_account_info().key;
 
         Ok(())
     }
 
+    /*
+        This instruction exchanges an amount of old_mint for new_mint. The tokens for
+        the new_mint have already been preminted to the pda account. The instruction
+        will transfer the old_mint tokens to the pda account and then transfer the
+        new_mint tokens from the pda account to the user account.
+     */
     pub fn exchange(ctx: Context<Exchange>, amount: u64) -> ProgramResult {
-        msg!("Beginning exchange operation");
+        msg!("Starting Exchange");
+        msg!("Mint to accept {}", ctx.accounts.old_token_mint.to_account_info().key);
+        msg!("Mint to return {}", ctx.accounts.new_token_mint.to_account_info().key);
+        msg!("Amount {}", amount);
 
-        // TODO: use refactored fn to validate mints
-        let mint_to_accept = "FRDBGxn9zaGmYWFZREdXMJZ7hiar9KHmaEPA4yQYs56Z";
-        let mint_to_return = "4m3yG7EKgAXXFJUTDLLFBQ91QmJwiG8T9nC2YGcfpj1m";
-        let mint_to_accept_pub_key = Pubkey::from_str(&mint_to_accept).unwrap();
-        let mint_to_return_pub_key = Pubkey::from_str(&mint_to_return).unwrap();
+        msg!("Transfering old tokens from user to pda");
+        Util::transfer_tokens(
+            ctx.accounts.user_old_token_account.to_account_info().clone(),
+            ctx.accounts.pda_old_token_account.to_account_info().clone(),
+            ctx.accounts.user.to_account_info().clone(),
+            ctx.accounts.token_program.to_account_info().clone(),
+            amount,
+            None
+        )?;
 
-        let seed_phrase = b"rndi_rnd";
-        let (pda_authority, pda_authority_bump) = Pubkey::find_program_address(&[seed_phrase.as_ref()], ctx.program_id);
-        let pda_authority_seed: &[&[&[u8]]] = &[&[&[pda_authority_bump]]];
-
-        let acceptor_seed = &[
-            mint_to_accept_pub_key.as_ref()
+        let seed: &[u8] = b"rndi_rnd";
+        let bump = *ctx.bumps.get("pda").ok_or(ProgramError::InvalidSeeds)?;
+        let signer_seeds: &[&[&[u8]]] = &[
+            &[seed, &[bump]]
         ];
-        let return_seed = &[
-            mint_to_return_pub_key.as_ref()
-        ];
 
-        let (pda_account_acceptor, _pda_acceptor_bump_seed) = Pubkey::find_program_address(
-            acceptor_seed,
-            ctx.program_id
-        );
-        let (pda_account_sender, _pda_sender_bump_seed) = Pubkey::find_program_address(
-            return_seed,
-            ctx.program_id
-        );
-
-        msg!("acceptor_seed: {:?}", &acceptor_seed);
-
-        msg!("return_seed: {:?}", &return_seed);
-
-        msg!("Executing exchange initiated by: {}", ctx.accounts.user.key);
-
-        msg!("Acceptor PDA: {}", pda_account_acceptor.key());
-
-        msg!("Sender PDA: {}", pda_account_sender.key());
-
-        if ctx.accounts.mint_to_return.to_account_info().key != &mint_to_return_pub_key {
-            msg!("Invalid mint to return offered: {}", ctx.accounts.mint_to_return.to_account_info().key);
-            return Err(ErrorCode::InvalidMint.into());
-        }
-
-        if ctx.accounts.mint_to_accept.to_account_info().key != &mint_to_accept_pub_key {
-            msg!("Invalid mint to accept offered: {}", ctx.accounts.mint_to_accept.to_account_info().key);
-            return Err(ErrorCode::InvalidMint.into());
-        }
-
-        if ctx.accounts.pda_account_sender.owner != pda_authority {
-            msg!("Invalid PDA account owner: {}", ctx.accounts.pda_account_sender.owner);
-            msg!("Expected PDA account owner: {:?}", pda_authority);
-            return Err(ErrorCode::InvalidPda.into());
-        }
-
-        if *ctx.accounts.token_program.key != token::ID {
-            msg!("Invalid token program info: {}", ctx.accounts.token_program.key);
-            return Err(ErrorCode::InvalidTokenProgram.into());
-        }
-
-        let cpi_program = ctx.accounts.token_program.to_account_info().clone();
-
-        msg!("Transfer from user to PDA");
-
-        // Transfer from user to PDA
-        let cpi_accounts_offering = token::Transfer {
-            from: ctx.accounts.user_token_account_a.to_account_info().clone(),
-            to: ctx.accounts.pda_account_acceptor.to_account_info().clone(),
-            authority: ctx.accounts.user.to_account_info().clone(),
-        };
-
-        let cpi_ctx_offering = CpiContext::new_with_signer(
-            cpi_program.clone(),
-            cpi_accounts_offering,
-            pda_authority_seed
-        );
-        token::transfer(cpi_ctx_offering, amount)?;
-
-        msg!("Transfer from PDA to user. PDA owner {}", ctx.accounts.pda_account_sender.owner);
-
-        msg!("Transfer from {}", ctx.accounts.pda_account_sender.to_account_info().key);
-
-        msg!("Transfer to {}", ctx.accounts.user_token_account_b.to_account_info().key);
-
-        msg!("With authority {}", ctx.accounts.user.to_account_info().clone().key);
-
-        // Transfer from PDA to user
-        let cpi_accounts_returning = token::Transfer {
-            from: ctx.accounts.pda_account_sender.to_account_info().clone(),
-            to: ctx.accounts.user_token_account_b.to_account_info().clone(),
-            authority: ctx.accounts.pda_account_sender.to_account_info().clone(),
-        };
-
-        let cpi_ctx_returning = CpiContext::new_with_signer(
-            cpi_program.clone(),
-            cpi_accounts_returning,
-            pda_authority_seed,
-        );
-
-        msg!("Executing transfer");
-
-        token::transfer(cpi_ctx_returning, amount)?;
+        msg!("Transfering new tokens from pda to user");
+        Util::transfer_tokens(
+            ctx.accounts.pda_new_token_account.to_account_info().clone(),
+            ctx.accounts.user_new_token_account.to_account_info().clone(),
+            ctx.accounts.pda.to_account_info().clone(),
+            ctx.accounts.token_program.to_account_info().clone(),
+            amount,
+            Some(signer_seeds)
+        )?;
 
         Ok(())
     }
 }
 
-pub enum ErrorCode {
-    InvalidTokenProgram,
-    InvalidPda,
-    InvalidMint,
-}
+pub struct Util;
+impl <'info>Util {
+    pub fn transfer_tokens(sender: AccountInfo<'info>, receiver: AccountInfo<'info>, owner: AccountInfo<'info>, token_program: AccountInfo<'info>, amount: u64, signer_seeds: Option<&[&[&[u8]]]>) -> ProgramResult {
+        let accounts = Transfer {
+            from: sender,
+            to: receiver,
+            authority: owner,
+        };
 
-impl From<ErrorCode> for ProgramError {
-    fn from(e: ErrorCode) -> Self {
-        ProgramError::Custom(e as u32)
+        let mut context = CpiContext::new(token_program, accounts);
+
+        if signer_seeds.is_some() {
+            context = context.with_signer(signer_seeds.unwrap());
+        }
+
+        transfer(context, amount)?;
+        Ok(())
     }
+
 }
 
 #[account]
-pub struct Auth {}
+#[derive(Default)]
+pub struct Auth {
+    pub authority: Pubkey,
+    pub old_token_mint: Pubkey,
+    pub new_token_mint: Pubkey,
+}
 
 #[derive(Accounts)]
 pub struct Exchange<'info> {
     #[account(mut)]
     user: Signer<'info>,
-    pda_authority: Account<'info, Auth>,
-    #[account(mut)]
-    user_token_account_a: Account<'info, TokenAccount>,
-    #[account(mut)]
-    user_token_account_b: Account<'info, TokenAccount>,
-    #[account(mut)]
-    pda_account_acceptor: Account<'info, TokenAccount>,
-    #[account(mut)]
-    pda_account_sender: Account<'info, TokenAccount>,
-    mint_to_accept: Account<'info, Mint>,
-    mint_to_return: Account<'info, Mint>,
-    rent: Sysvar<'info, Rent>,
-    token_program: Program<'info, Token>,
-    system_program: Program<'info, System>,
-}
-
-#[derive(Accounts)]
-pub struct InitializeAuthority<'info> {
-    #[account(mut)]
-    initializer: Signer<'info>,
     #[account(
-        init,
-        seeds = [b"rndi_rnd".as_ref()],
+        seeds = [b"rndi_rnd"],
         bump,
-        payer = initializer,
-        space = TokenAccount::LEN
     )]
-    pda_authority: Account<'info, Auth>,
-    rent: Sysvar<'info, Rent>,
+    pda: Account<'info, Auth>,
+
+    #[account(
+        constraint = new_token_mint.to_account_info().key == &pda.new_token_mint,
+    )]
+    new_token_mint: Account<'info, Mint>,
+    #[account(
+        constraint = old_token_mint.to_account_info().key == &pda.old_token_mint,
+    )]
+    old_token_mint: Account<'info, Mint>,
+
+    #[account(
+        init_if_needed,
+        payer = user,
+        associated_token::mint = old_token_mint,
+        associated_token::authority = user,
+    )]
+    user_old_token_account: Account<'info, TokenAccount>,
+    #[account(
+        init_if_needed,
+        payer = user,
+        associated_token::mint = new_token_mint,
+        associated_token::authority = user,
+    )]
+    user_new_token_account: Account<'info, TokenAccount>,
+
+    #[account(
+        init_if_needed,
+        payer = user,
+        associated_token::mint = old_token_mint,
+        associated_token::authority = pda,
+    )]
+    pda_old_token_account: Account<'info, TokenAccount>,
+    #[account(
+        init_if_needed,
+        payer = user,
+        associated_token::mint = new_token_mint,
+        associated_token::authority = pda,
+    )]
+    pda_new_token_account: Account<'info, TokenAccount>,
+
     token_program: Program<'info, Token>,
     system_program: Program<'info, System>,
+    associated_token_program: Program<'info, AssociatedToken>,
 }
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
-    #[account(mut)]
-    initializer: Signer<'info>,
-    #[account(mut)]
-    pda_authority: Account<'info, Auth>,
     #[account(
-        init,
-        seeds = [mint_to_accept.key().as_ref()],
-        bump,
-        payer = initializer,
-        token::mint = mint_to_accept,
-        token::authority = pda_authority,
+        mut,
+        constraint = authority.key == &pda.authority || pda.authority == Pubkey::default(),
     )]
-    pda_account_acceptor: Account<'info, TokenAccount>,
+    authority: Signer<'info>,
     #[account(
-        init,
-        seeds = [mint_to_return.key().as_ref()],
+        init_if_needed,
+        seeds = [b"rndi_rnd"],
+        space = 8 + 32 * 3,
         bump,
-        payer = initializer,
-        token::mint = mint_to_return,
-        token::authority = pda_authority,
+        payer = authority
     )]
-    pda_account_sender: Account<'info, TokenAccount>,
-    mint_to_accept: Account<'info, Mint>,
-    mint_to_return: Account<'info, Mint>,
-    rent: Sysvar<'info, Rent>,
-    token_program: Program<'info, Token>,
+    pda: Account<'info, Auth>,
+
+    old_token_mint: Account<'info, Mint>,
+    new_token_mint: Account<'info, Mint>,
+
     system_program: Program<'info, System>,
 }
