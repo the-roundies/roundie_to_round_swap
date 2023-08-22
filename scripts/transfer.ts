@@ -18,6 +18,8 @@ import {
     PROGRAM_ID
   );
 
+  console.log('pda', pda.toBase58());
+
   const newTokenMint = new PublicKey(
     'AD2AWgBPdfbvko4a7i6ZjKq1JxDGRUTPWpd7bUJ2hSaK'
   );
