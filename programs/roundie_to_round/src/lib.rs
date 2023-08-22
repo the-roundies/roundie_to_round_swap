@@ -44,7 +44,8 @@ pub mod roundie_to_round {
         msg!("Mint to return {}", ctx.accounts.new_token_mint.to_account_info().key);
         msg!("Amount {}", amount);
 
-        msg!("Transfering old tokens from user to pda");
+        msg!("Transferring old tokens from user account: {}", ctx.accounts.user_old_token_account.to_account_info().key);
+        msg!("Transferring old tokens to pda ata: {}", ctx.accounts.pda_old_token_account.to_account_info().key);
         Util::transfer_tokens(
             ctx.accounts.user_old_token_account.to_account_info().clone(),
             ctx.accounts.pda_old_token_account.to_account_info().clone(),
@@ -60,7 +61,7 @@ pub mod roundie_to_round {
             &[seed, &[bump]]
         ];
 
-        msg!("Transfering new tokens from pda to user");
+        msg!("Transfering new tokens to user from ata: {}", ctx.accounts.pda_new_token_account.to_account_info().key);
         Util::transfer_tokens(
             ctx.accounts.pda_new_token_account.to_account_info().clone(),
             ctx.accounts.user_new_token_account.to_account_info().clone(),
