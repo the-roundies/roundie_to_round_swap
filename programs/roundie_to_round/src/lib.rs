@@ -56,7 +56,7 @@ pub mod roundie_to_round {
         )?;
 
         let seed: &[u8] = b"rndi_rnd";
-        let bump = *ctx.bumps.get("pda").ok_or(ProgramError::InvalidSeeds)?;
+        let bump = ctx.bumps.pda;
         let signer_seeds: &[&[&[u8]]] = &[
             &[seed, &[bump]]
         ];
